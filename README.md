@@ -1,15 +1,24 @@
-# Reddit Copilot 🤖
+# Reddit Copilot v2 🤖
 
-A semi-automated Reddit content assistant powered by OpenAI that analyzes your Reddit profile, generates intelligent content suggestions, and executes approved actions directly on Reddit.
+An intelligent Reddit engagement tool that helps you discover business opportunities, read complete posts, and generate AI-powered comment suggestions with voice input support.
 
 ## 🚀 Features
 
-### ✅ Completed Features
+### ✅ New in v2
+- **Netflix-Style Home Feed** - Beautiful card-based layout with media previews
+- **Business-Oriented Filtering** - 5 smart presets to find relevant content
+- **Advanced AI Modal** - Two-column layout with independent scrolling
+- **Voice Input Integration** - Natural speech-to-text for comment ideas  
+- **Complete Post Display** - Read full posts before engaging
+- **Smart Content Scoring** - Automatic relevance and opportunity detection
+- **Independent Scrolling** - Separate scrollbars for posts and AI suggestions
+
+### ✅ Core Features
 - **Reddit OAuth Integration** - Secure authentication with Reddit API
 - **Profile Analysis** - Fetch user karma, posts, and account details
-- **Subreddit Management** - View and analyze all subscribed subreddits (50+)
-- **AI Suggestion Engine** - OpenAI GPT-4 powered content recommendations
-- **Action Executor** - Post and comment directly to Reddit from approved suggestions
+- **Subreddit Management** - View and analyze all subscribed subreddits
+- **AI Suggestion Engine** - OpenAI GPT-4 powered comment recommendations
+- **Action Executor** - Post comments directly to Reddit from suggestions
 - **Modern Dashboard** - Clean Next.js frontend with real-time data
 
 ### 🎯 Core Workflow
