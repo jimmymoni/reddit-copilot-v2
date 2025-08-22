@@ -30,6 +30,35 @@ export interface SubredditInfo {
   active_user_count: number;
 }
 
+export interface RedditPost {
+  id: string;
+  title: string;
+  content: string;
+  author: string;
+  subreddit: string;
+  score: number;
+  commentCount: number;
+  created: Date;
+  url: string;
+  permalink: string;
+  mediaType: 'text' | 'image' | 'video' | 'link';
+  mediaUrl?: string;
+  flair?: string;
+  isNSFW: boolean;
+  upvoteRatio: number;
+}
+
+export interface SubredditRules {
+  subreddit: string;
+  rules: Array<{
+    shortName: string;
+    description: string;
+    kind: string;
+  }>;
+  description: string;
+  submissionType: string;
+}
+
 export class RedditService {
   private static encryptToken(token: string): string {
     const key = process.env.ENCRYPTION_KEY;
@@ -180,6 +209,104 @@ export class RedditService {
     } catch (error) {
       throw new Error(`Failed to fetch user subreddits: ${error}`);
     }
+  }
+
+  /**
+   * Get home feed posts from user's subscribed subreddits
+   */
+  static async getHomeFeed(redditId: string, limit: number = 25): Promise<RedditPost[]> {
+    const reddit = await this.getRedditClient(redditId);
+    
+    try {
+      // Get user's subscribed subreddits
+      const subreddits = await this.getUserSubreddits(redditId);
+      
+      // Fetch posts from multiple subreddits
+      const postPromises = subreddits.slice(0, 20).map(async (sub) => {
+        try {
+          // @ts-ignore: Snoowrap types are complex
+          const posts = await reddit.getSubreddit(sub.name).getNew({ limit: 3 });
+          return posts.map((post: any) => this.formatRedditPost(post));
+        } catch (error) {
+          console.error(`Failed to fetch posts from r/${sub.name}:`, error);
+          return [];
+        }
+      });
+      
+      const allPosts = await Promise.all(postPromises);
+      const flatPosts = allPosts.flat();
+      
+      // Sort by creation time and limit results
+      return flatPosts
+        .sort((a, b) => b.created.getTime() - a.created.getTime())
+        .slice(0, limit);
+        
+    } catch (error) {
+      throw new Error(`Failed to fetch home feed: ${error}`);
+    }
+  }
+
+  /**
+   * Get subreddit rules and guidelines
+   */
+  static async getSubredditRules(subreddit: string): Promise<SubredditRules> {
+    const reddit = new snoowrap({
+      userAgent: 'RedditCopilot/1.0.0',
+      clientId: process.env.REDDIT_CLIENT_ID!,
+      clientSecret: process.env.REDDIT_CLIENT_SECRET!,
+    });
+    
+    try {
+      // @ts-ignore: Snoowrap types are complex
+      const sub = await reddit.getSubreddit(subreddit);
+      const rules = await sub.getRules();
+      
+      return {
+        subreddit: subreddit,
+        rules: rules.map((rule: any) => ({
+          shortName: rule.short_name || rule.violation_reason,
+          description: rule.description,
+          kind: rule.kind
+        })),
+        description: sub.description || '',
+        submissionType: sub.submission_type || 'any'
+      };
+    } catch (error) {
+      throw new Error(`Failed to fetch rules for r/${subreddit}: ${error}`);
+    }
+  }
+
+  /**
+   * Format Reddit post data into our interface
+   */
+  private static formatRedditPost(post: any): RedditPost {
+    return {
+      id: post.id,
+      title: post.title,
+      content: post.selftext || '',
+      author: post.author?.name || '[deleted]',
+      subreddit: post.subreddit_name_prefixed.replace('r/', ''),
+      score: post.score,
+      commentCount: post.num_comments,
+      created: new Date(post.created_utc * 1000),
+      url: post.url,
+      permalink: post.permalink,
+      mediaType: this.getMediaType(post),
+      mediaUrl: this.getMediaType(post) === 'text' ? undefined : post.url,
+      flair: post.link_flair_text,
+      isNSFW: post.over_18,
+      upvoteRatio: post.upvote_ratio
+    };
+  }
+
+  /**
+   * Determine media type from Reddit post
+   */
+  private static getMediaType(post: any): 'text' | 'image' | 'video' | 'link' {
+    if (post.is_self) return 'text';
+    if (post.post_hint === 'image' || post.url?.match(/\.(jpg|jpeg|png|gif|webp)$/i)) return 'image';
+    if (post.post_hint === 'hosted:video' || post.is_video) return 'video';
+    return 'link';
   }
 
   /**

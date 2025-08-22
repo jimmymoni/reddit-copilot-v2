@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { RedditPost, SubredditRules, RedditProfile } from './reddit';
 
 let openai: OpenAI;
 
@@ -41,6 +42,18 @@ export interface Suggestion {
   estimatedEngagement: string;
 }
 
+export interface EngagementSuggestion {
+  id: string;
+  postId: string;
+  type: 'thoughtful_comment' | 'question' | 'experience_share' | 'helpful_advice';
+  content: string;
+  reasoning: string;
+  confidence: number;
+  ruleCompliance: boolean;
+  riskLevel: 'low' | 'medium' | 'high';
+  estimatedReception: string;
+}
+
 export class OpenAIService {
   /**
    * Generate content suggestions based on user's Reddit profile and interests
@@ -70,6 +83,111 @@ export class OpenAIService {
     } catch (error) {
       console.error('OpenAI API error:', error);
       throw new Error(`Failed to generate suggestions: ${error}`);
+    }
+  }
+
+  /**
+   * Generate engagement suggestions for a specific Reddit post
+   */
+  static async generateEngagementSuggestions(
+    post: RedditPost, 
+    userProfile: RedditProfile, 
+    subredditRules?: SubredditRules
+  ): Promise<EngagementSuggestion[]> {
+    try {
+      const prompt = this.buildEngagementPrompt(post, userProfile, subredditRules);
+      
+      const response = await getOpenAI().chat.completions.create({
+        model: 'gpt-4',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are a Reddit engagement expert. Generate thoughtful, authentic comment suggestions that add value to discussions while respecting subreddit rules. Return JSON only.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        max_tokens: 1500,
+        temperature: 0.7
+      });
+
+      const suggestions = JSON.parse(response.choices[0].message.content || '[]');
+      return this.formatEngagementSuggestions(suggestions, post.id);
+    } catch (error) {
+      console.error('OpenAI engagement suggestion error:', error);
+      throw new Error(`Failed to generate engagement suggestions: ${error}`);
+    }
+  }
+
+  /**
+   * Process voice/text input for comment refinement
+   */
+  static async refineUserInput(
+    rawInput: string,
+    post: RedditPost,
+    userProfile: RedditProfile,
+    subredditRules?: SubredditRules
+  ): Promise<EngagementSuggestion> {
+    try {
+      const prompt = `
+You are helping a Reddit user refine their comment idea. Take their rough thoughts and create a well-crafted, engaging comment.
+
+POST CONTEXT:
+Title: ${post.title}
+Content: ${post.content.substring(0, 500)}...
+Subreddit: r/${post.subreddit}
+${subredditRules ? `Rules: ${subredditRules.rules.map(r => r.shortName + ': ' + r.description).join('; ')}` : ''}
+
+USER INPUT: "${rawInput}"
+
+USER PROFILE:
+- Username: ${userProfile.username}
+- Karma: ${userProfile.totalKarma}
+- Account age: ${userProfile.accountCreated}
+
+Transform the user's input into a refined comment that:
+1. Maintains their authentic voice and opinion
+2. Is well-structured and engaging
+3. Adds value to the discussion
+4. Respects subreddit rules and culture
+5. Matches the user's communication style
+
+Return JSON with this format:
+{
+  "content": "refined comment text",
+  "reasoning": "why this approach works",
+  "confidence": 0.8,
+  "ruleCompliance": true,
+  "riskLevel": "low",
+  "estimatedReception": "positive - adds valuable perspective"
+}
+      `;
+
+      const response = await getOpenAI().chat.completions.create({
+        model: 'gpt-4',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 800,
+        temperature: 0.6
+      });
+
+      const suggestion = JSON.parse(response.choices[0].message.content || '{}');
+      
+      return {
+        id: `refined_${Date.now()}`,
+        postId: post.id,
+        type: 'thoughtful_comment',
+        content: suggestion.content || rawInput,
+        reasoning: suggestion.reasoning || 'User input refinement',
+        confidence: suggestion.confidence || 0.7,
+        ruleCompliance: suggestion.ruleCompliance ?? true,
+        riskLevel: suggestion.riskLevel || 'low',
+        estimatedReception: suggestion.estimatedReception || 'neutral'
+      };
+    } catch (error) {
+      console.error('Input refinement error:', error);
+      throw new Error(`Failed to refine user input: ${error}`);
     }
   }
 
@@ -138,6 +256,69 @@ Return JSON array with this exact format:
   }
 ]
     `;
+  }
+
+  private static buildEngagementPrompt(
+    post: RedditPost, 
+    userProfile: RedditProfile, 
+    subredditRules?: SubredditRules
+  ): string {
+    return `
+Generate 3 engagement suggestions for this Reddit post:
+
+POST DETAILS:
+Title: ${post.title}
+Content: ${post.content.substring(0, 800)}${post.content.length > 800 ? '...' : ''}
+Subreddit: r/${post.subreddit}
+Author: u/${post.author}
+Score: ${post.score} (${Math.round(post.upvoteRatio * 100)}% upvoted)
+Comments: ${post.commentCount}
+Posted: ${post.created.toLocaleDateString()}
+
+${subredditRules ? `SUBREDDIT RULES:
+${subredditRules.rules.map(rule => `- ${rule.shortName}: ${rule.description}`).join('\n')}
+Submission Type: ${subredditRules.submissionType}` : ''}
+
+USER CONTEXT:
+Username: ${userProfile.username}
+Total Karma: ${userProfile.totalKarma}
+Account Age: ${userProfile.accountCreated.toDateString()}
+Recent Activity: ${userProfile.recentPosts.slice(0, 3).map(p => p.subreddit).join(', ')}
+
+Generate suggestions that:
+1. Add genuine value to the discussion
+2. Match the user's expertise level and interests
+3. Respect subreddit culture and rules
+4. Are authentic and not generic
+5. Have high potential for positive reception
+
+Return JSON array with this exact format:
+[
+  {
+    "type": "thoughtful_comment|question|experience_share|helpful_advice",
+    "content": "specific comment text",
+    "reasoning": "why this approach works",
+    "confidence": 0.8,
+    "ruleCompliance": true,
+    "riskLevel": "low|medium|high",
+    "estimatedReception": "likely positive - adds expertise"
+  }
+]
+    `;
+  }
+
+  private static formatEngagementSuggestions(rawSuggestions: any[], postId: string): EngagementSuggestion[] {
+    return rawSuggestions.map((suggestion, index) => ({
+      id: `engagement_${postId}_${Date.now()}_${index}`,
+      postId,
+      type: suggestion.type || 'thoughtful_comment',
+      content: suggestion.content || '',
+      reasoning: suggestion.reasoning || '',
+      confidence: suggestion.confidence || 0.5,
+      ruleCompliance: suggestion.ruleCompliance ?? true,
+      riskLevel: suggestion.riskLevel || 'low',
+      estimatedReception: suggestion.estimatedReception || 'neutral'
+    }));
   }
 
   private static formatSuggestions(rawSuggestions: any[]): Suggestion[] {

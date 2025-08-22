@@ -10,7 +10,8 @@
       "Bash(npm test)",
       "Bash(npx kill-port:*)",
       "Bash(npm install:*)",
-      "Bash(npx create-next-app:*)"
+      "Bash(npx create-next-app:*)",
+      "WebFetch(domain:www.tydal.co)"
     ],
     "deny": [],
     "ask": []

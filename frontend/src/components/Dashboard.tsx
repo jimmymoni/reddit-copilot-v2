@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import ProfileCard from './ProfileCard'
 import SubredditList from './SubredditList'
 import SuggestionsFeed from './SuggestionsFeed'
+import HomeFeed from './HomeFeed'
 
 interface DashboardProps {
   redditId: string
@@ -51,7 +52,7 @@ export default function Dashboard({ redditId }: DashboardProps) {
   const [subreddits, setSubreddits] = useState<Subreddit[]>([])
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'overview' | 'subreddits' | 'suggestions'>('overview')
+  const [activeTab, setActiveTab] = useState<'home' | 'overview' | 'subreddits' | 'suggestions'>('home')
 
   useEffect(() => {
     loadData()
@@ -152,6 +153,7 @@ export default function Dashboard({ redditId }: DashboardProps) {
       {/* Navigation */}
       <nav className="flex space-x-1 mb-6 bg-white rounded-lg p-1 shadow-sm">
         {[
+          { key: 'home', label: '🏠 Home Feed' },
           { key: 'overview', label: '📊 Overview' },
           { key: 'subreddits', label: '📱 Subreddits' },
           { key: 'suggestions', label: '🤖 AI Suggestions' }
@@ -171,6 +173,10 @@ export default function Dashboard({ redditId }: DashboardProps) {
       </nav>
 
       {/* Content */}
+      {activeTab === 'home' && (
+        <HomeFeed redditId={redditId} />
+      )}
+
       {activeTab === 'overview' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {profile && <ProfileCard profile={profile} />}

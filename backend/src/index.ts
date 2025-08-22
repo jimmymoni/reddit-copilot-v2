@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import authRoutes from './routes/auth';
 import userRoutes from './routes/user';
+import homefeedRoutes from './routes/homefeed';
 
 dotenv.config();
 
@@ -17,6 +18,7 @@ app.use(express.urlencoded({ extended: true }));
 // Routes
 app.use('/auth', authRoutes);
 app.use('/api', userRoutes);
+app.use('/api/homefeed', homefeedRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
