@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import authRoutes from './routes/auth';
 import userRoutes from './routes/user';
 import homefeedRoutes from './routes/homefeed';
+import researchRoutes from './routes/research';
+import subredditRoutes from './routes/subreddit';
 
 dotenv.config();
 
@@ -19,6 +21,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/auth', authRoutes);
 app.use('/api', userRoutes);
 app.use('/api/homefeed', homefeedRoutes);
+app.use('/api/research', researchRoutes);
+app.use('/api/subreddit', subredditRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

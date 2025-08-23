@@ -13,7 +13,7 @@ const router = Router();
 router.get('/', authenticateUser, async (req: AuthenticatedRequest, res) => {
   try {
     const redditId = req.user!.redditId;
-    const limit = parseInt(req.query.limit as string) || 50;
+    const limit = parseInt(req.query.limit as string) || 200;
     const filterPreset = req.query.filter as string || 'business_opportunities';
 
     // Get raw posts
@@ -124,18 +124,18 @@ router.post('/engagement-suggestions', authenticateUser, async (req: Authenticat
 });
 
 /**
- * POST /api/homefeed/refine-input
- * Refine user's voice/text input into a polished comment
+ * POST /api/homefeed/improve-comment
+ * Improve user's comment to be more engaging and appropriate
  */
-router.post('/refine-input', authenticateUser, async (req: AuthenticatedRequest, res) => {
+router.post('/improve-comment', authenticateUser, async (req: AuthenticatedRequest, res) => {
   try {
     const redditId = req.user!.redditId;
-    const { postId, userInput } = req.body;
+    const { postId, userComment } = req.body;
 
-    if (!postId || !userInput) {
+    if (!postId || !userComment) {
       return res.status(400).json({
         success: false,
-        error: 'Post ID and user input are required'
+        error: 'Post ID and user comment are required'
       });
     }
 
@@ -159,9 +159,9 @@ router.post('/refine-input', authenticateUser, async (req: AuthenticatedRequest,
       console.warn(`Could not fetch rules for r/${post.subreddit}:`, error);
     }
 
-    // Refine user input
-    const refinedSuggestion = await OpenAIService.refineUserInput(
-      userInput,
+    // Improve user comment
+    const improvedComment = await OpenAIService.refineUserInput(
+      userComment,
       post,
       userProfile,
       subredditRules
@@ -169,8 +169,8 @@ router.post('/refine-input', authenticateUser, async (req: AuthenticatedRequest,
 
     res.json({
       success: true,
-      originalInput: userInput,
-      refinedSuggestion,
+      originalComment: userComment,
+      improvedComment,
       post: {
         id: post.id,
         title: post.title,
@@ -202,8 +202,9 @@ router.post('/refine-input', authenticateUser, async (req: AuthenticatedRequest,
 router.get('/subreddit-rules/:subreddit', authenticateUser, async (req: AuthenticatedRequest, res) => {
   try {
     const { subreddit } = req.params;
+    const redditId = req.user!.redditId;
     
-    const rules = await RedditService.getSubredditRules(subreddit);
+    const rules = await RedditService.getSubredditRules(redditId, subreddit);
     
     res.json({
       success: true,

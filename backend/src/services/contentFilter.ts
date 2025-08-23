@@ -87,7 +87,14 @@ export const EXCLUDE_PATTERNS = [
   "gossip", "rant", "complaint", "personal story", "family",
   
   // Low-value content
-  "upvote if", "karma", "cake day", "first post", "long time lurker"
+  "upvote if", "karma", "cake day", "first post", "long time lurker",
+  
+  // Welcome posts and announcements (often old)
+  "welcome to", "community subreddit", "essential information", "get started",
+  "about this subreddit", "rules", "guidelines", "moderator", "announcement",
+  
+  // Art/creative content that's not business-focused  
+  "art", "creative", "design", "runway", "video generation", "ai art"
 ];
 
 export const FILTER_PRESETS: FilterPreset[] = [
@@ -161,6 +168,15 @@ export const FILTER_PRESETS: FilterPreset[] = [
 export class ContentFilterService {
   static scorePost(post: RedditPost, filter: ContentFilter): number {
     let score = 0;
+    
+    // Time-based scoring: Heavily favor recent posts
+    const postAge = Date.now() - post.created.getTime();
+    const dayInMs = 24 * 60 * 60 * 1000;
+    
+    if (postAge < dayInMs) score += 10; // Less than 1 day old
+    else if (postAge < dayInMs * 7) score += 5; // Less than 1 week old  
+    else if (postAge < dayInMs * 30) score += 2; // Less than 1 month old
+    else if (postAge > dayInMs * 365) score -= 15; // Older than 1 year - heavily penalize
     
     // Category matching
     const postSubreddit = post.subreddit.toLowerCase();

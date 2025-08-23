@@ -48,6 +48,16 @@ export interface RedditPost {
   upvoteRatio: number;
 }
 
+export interface SubredditFlair {
+  id: string;
+  text: string;
+  type: 'text' | 'richtext';
+  allowable_content?: string;
+  max_emojis?: number;
+  mod_only?: boolean;
+  css_class?: string;
+}
+
 export interface SubredditRules {
   subreddit: string;
   rules: Array<{
@@ -57,9 +67,60 @@ export interface SubredditRules {
   }>;
   description: string;
   submissionType: string;
+  flairs: SubredditFlair[];
+  postRequirements?: {
+    minTitleLength?: number;
+    maxTitleLength?: number;
+    minBodyLength?: number;
+    maxBodyLength?: number;
+    flairRequired?: boolean;
+    allowedDomains?: string[];
+    restrictedWords?: string[];
+  };
 }
 
 export class RedditService {
+  // Search subreddit for posts containing keywords
+  async searchSubreddit(redditId: string, subreddit: string, query: string, timeframe: string = 'week') {
+    const reddit = await this.getRedditInstance(redditId);
+    
+    try {
+      const timeParam = this.getTimeParameter(timeframe);
+      const searchResults = await reddit.getSubreddit(subreddit).search({
+        query,
+        time: timeParam,
+        sort: 'relevance',
+        limit: 25
+      });
+
+      return searchResults.map((post: any) => ({
+        id: post.id,
+        title: post.title,
+        selftext: post.selftext || '',
+        author: post.author ? post.author.name : '[deleted]',
+        subreddit: post.subreddit.display_name,
+        score: post.score,
+        num_comments: post.num_comments,
+        created_utc: post.created_utc,
+        permalink: post.permalink,
+        url: post.url,
+        upvote_ratio: post.upvote_ratio || 0
+      }));
+    } catch (error) {
+      console.error(`Error searching r/${subreddit}:`, error);
+      return [];
+    }
+  }
+
+  private getTimeParameter(timeframe: string): 'hour' | 'day' | 'week' | 'month' | 'year' | 'all' {
+    switch (timeframe) {
+      case 'day': return 'day';
+      case 'week': return 'week';
+      case 'month': return 'month';
+      case 'all': return 'all';
+      default: return 'week';
+    }
+  }
   private static encryptToken(token: string): string {
     const key = process.env.ENCRYPTION_KEY;
     if (!key) throw new Error('ENCRYPTION_KEY not set');
@@ -196,7 +257,7 @@ export class RedditService {
     
     try {
       // @ts-ignore: Snoowrap types are complex, using any for now
-      const subreddits = await reddit.getSubscriptions({ limit: 50 });
+      const subreddits = await reddit.getSubscriptions({ limit: 100 });
       
       return subreddits.map((sub: any) => ({
         name: sub.display_name,
@@ -214,30 +275,72 @@ export class RedditService {
   /**
    * Get home feed posts from user's subscribed subreddits
    */
-  static async getHomeFeed(redditId: string, limit: number = 25): Promise<RedditPost[]> {
+  static async getHomeFeed(redditId: string, limit: number = 200): Promise<RedditPost[]> {
     const reddit = await this.getRedditClient(redditId);
     
     try {
       // Get user's subscribed subreddits
       const subreddits = await this.getUserSubreddits(redditId);
       
-      // Fetch posts from multiple subreddits
-      const postPromises = subreddits.slice(0, 20).map(async (sub) => {
+      // Maximum Reddit API efficiency approach
+      const allPosts: RedditPost[] = [];
+      
+      // BALANCED APPROACH: Fetch from more subreddits but with delays
+      const topSubs = subreddits.slice(0, 4); // Increase to 4 subreddits for more content
+      
+      // Sequential fetching with delays to prevent rate limiting
+      for (let i = 0; i < topSubs.length; i++) {
+        const sub = topSubs[i];
         try {
+          // Add delay between requests (except first one)
+          if (i > 0) {
+            await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+          }
+          
+          // Get fresh posts from this subreddit - mix of new and hot
           // @ts-ignore: Snoowrap types are complex
-          const posts = await reddit.getSubreddit(sub.name).getNew({ limit: 3 });
-          return posts.map((post: any) => this.formatRedditPost(post));
+          const newPosts = await reddit.getSubreddit(sub.name).getNew({ limit: 20 });
+          // @ts-ignore: Snoowrap types are complex
+          const hotPosts = await reddit.getSubreddit(sub.name).getHot({ limit: 10 });
+          // Combine new and hot posts, prioritizing recent content
+          const combinedPosts = [...newPosts, ...hotPosts];
+          const formattedPosts = combinedPosts.map((post: any) => this.formatRedditPost(post));
+          allPosts.push(...formattedPosts);
         } catch (error) {
           console.error(`Failed to fetch posts from r/${sub.name}:`, error);
-          return [];
+          // Continue with other subreddits instead of failing completely
         }
-      });
+      }
       
-      const allPosts = await Promise.all(postPromises);
-      const flatPosts = allPosts.flat();
+      // Add business-focused subreddits to improve relevance
+      const businessSubs = ['entrepreneur', 'startups', 'SaaS', 'business'];
+      
+      for (let i = 0; i < businessSubs.length && i < 2; i++) { // Add up to 2 business subs
+        try {
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Delay between requests
+          const businessSub = businessSubs[i];
+          
+          // Get fresh business content
+          // @ts-ignore: Snoowrap types are complex
+          const newBusinessPosts = await reddit.getSubreddit(businessSub).getNew({ limit: 15 });
+          // @ts-ignore: Snoowrap types are complex
+          const hotBusinessPosts = await reddit.getSubreddit(businessSub).getHot({ limit: 10 });
+          
+          const combinedBusinessPosts = [...newBusinessPosts, ...hotBusinessPosts];
+          const formattedBusinessPosts = combinedBusinessPosts.map((post: any) => this.formatRedditPost(post));
+          allPosts.push(...formattedBusinessPosts);
+        } catch (error) {
+          console.error(`Failed to fetch posts from r/${businessSubs[i]}:`, error);
+        }
+      }
+
+      // Remove duplicates
+      const uniquePosts = Array.from(
+        new Map(allPosts.map(post => [post.id, post])).values()
+      );
       
       // Sort by creation time and limit results
-      return flatPosts
+      return uniquePosts
         .sort((a, b) => b.created.getTime() - a.created.getTime())
         .slice(0, limit);
         
@@ -247,19 +350,102 @@ export class RedditService {
   }
 
   /**
+   * Get detailed subreddit information
+   */
+  static async getSubredditInfo(redditId: string, subredditName: string) {
+    const reddit = await this.getRedditClient(redditId);
+    
+    try {
+      // @ts-ignore: Snoowrap types are complex
+      const sub = await reddit.getSubreddit(subredditName);
+      
+      return {
+        name: sub.display_name,
+        title: sub.title || sub.display_name,
+        description: sub.public_description || sub.description || '',
+        subscribers: sub.subscribers || 0,
+        activeUsers: sub.active_user_count || 0,
+        created: (() => {
+          try {
+            if (sub.created_utc && !isNaN(sub.created_utc)) {
+              return new Date(sub.created_utc * 1000).toISOString();
+            }
+            return new Date().toISOString();
+          } catch (e) {
+            return new Date().toISOString();
+          }
+        })(),
+        isNSFW: sub.over18 || false,
+        icon: sub.icon_img || sub.community_icon || null
+      };
+    } catch (error) {
+      console.error(`Error fetching subreddit info for r/${subredditName}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get posts from a specific subreddit
+   */
+  static async getSubredditPosts(redditId: string, subredditName: string, sort: string = 'new', limit: number = 25) {
+    const reddit = await this.getRedditClient(redditId);
+    
+    try {
+      // @ts-ignore: Snoowrap types are complex
+      const subreddit = reddit.getSubreddit(subredditName);
+      let posts;
+
+      switch (sort) {
+        case 'hot':
+          posts = await subreddit.getHot({ limit });
+          break;
+        case 'top':
+          posts = await subreddit.getTop({ time: 'week', limit });
+          break;
+        case 'new':
+        default:
+          posts = await subreddit.getNew({ limit });
+          break;
+      }
+
+      return posts.map((post: any) => this.formatRedditPost(post));
+    } catch (error) {
+      console.error(`Error fetching posts from r/${subredditName}:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Get subreddit rules and guidelines
    */
-  static async getSubredditRules(subreddit: string): Promise<SubredditRules> {
-    const reddit = new snoowrap({
-      userAgent: 'RedditCopilot/1.0.0',
-      clientId: process.env.REDDIT_CLIENT_ID!,
-      clientSecret: process.env.REDDIT_CLIENT_SECRET!,
-    });
+  static async getSubredditRules(redditId: string, subreddit: string): Promise<SubredditRules> {
+    const reddit = await this.getRedditClient(redditId);
     
     try {
       // @ts-ignore: Snoowrap types are complex
       const sub = await reddit.getSubreddit(subreddit);
-      const rules = await sub.getRules();
+      const [rules, flairTemplates] = await Promise.all([
+        sub.getRules(),
+        sub.getLinkFlairTemplates().catch(() => [])
+      ]);
+      
+      // Parse subreddit settings for post requirements
+      const postRequirements = {
+        flairRequired: false,
+        minBodyLength: undefined as number | undefined,
+        maxBodyLength: undefined as number | undefined,
+        restrictedWords: [] as string[]
+      };
+      
+      // Check if flair is required by examining subreddit rules
+      const hasFlairRule = rules.some((rule: any) => 
+        rule.description?.toLowerCase().includes('flair') ||
+        rule.short_name?.toLowerCase().includes('flair')
+      );
+      
+      if (hasFlairRule || flairTemplates.length > 0) {
+        postRequirements.flairRequired = true;
+      }
       
       return {
         subreddit: subreddit,
@@ -269,7 +455,17 @@ export class RedditService {
           kind: rule.kind
         })),
         description: sub.description || '',
-        submissionType: sub.submission_type || 'any'
+        submissionType: sub.submission_type || 'any',
+        flairs: flairTemplates.map((flair: any) => ({
+          id: flair.id || flair.flair_template_id,
+          text: flair.text || flair.flair_text,
+          type: flair.type || 'text',
+          allowable_content: flair.allowable_content,
+          max_emojis: flair.max_emojis,
+          mod_only: flair.mod_only,
+          css_class: flair.css_class
+        })),
+        postRequirements
       };
     } catch (error) {
       throw new Error(`Failed to fetch rules for r/${subreddit}: ${error}`);
