@@ -1,6 +1,10 @@
 import OpenAI from 'openai';
 import { RedditPost, SubredditRules, RedditProfile } from './reddit';
 
+// Simple cache for OpenAI responses (1 hour expiry)
+const responseCache = new Map<string, { data: any, timestamp: number }>();
+const CACHE_DURATION = 3600000; // 1 hour
+
 let openai: OpenAI;
 
 function getOpenAI(): OpenAI {
@@ -10,6 +14,23 @@ function getOpenAI(): OpenAI {
     });
   }
   return openai;
+}
+
+function getCacheKey(prefix: string, data: any): string {
+  return `${prefix}_${JSON.stringify(data).substring(0, 100)}`;
+}
+
+function getCachedResponse(key: string): any | null {
+  const cached = responseCache.get(key);
+  if (cached && (Date.now() - cached.timestamp) < CACHE_DURATION) {
+    return cached.data;
+  }
+  responseCache.delete(key);
+  return null;
+}
+
+function setCachedResponse(key: string, data: any): void {
+  responseCache.set(key, { data, timestamp: Date.now() });
 }
 
 export interface SuggestionRequest {
@@ -60,10 +81,18 @@ export class OpenAIService {
    */
   static async generateSuggestions(request: SuggestionRequest): Promise<Suggestion[]> {
     try {
+      // Check cache first
+      const cacheKey = getCacheKey('suggestions', { userId: request.userProfile.username, subreddits: request.subreddits.slice(0, 5).map(s => s.name) });
+      const cachedResult = getCachedResponse(cacheKey);
+      if (cachedResult) {
+        console.log('Using cached suggestions');
+        return cachedResult;
+      }
+
       const prompt = this.buildSuggestionPrompt(request);
       
       const response = await getOpenAI().chat.completions.create({
-        model: 'gpt-4',
+        model: 'gpt-3.5-turbo',
         messages: [
           {
             role: 'system',
@@ -74,12 +103,17 @@ export class OpenAIService {
             content: prompt
           }
         ],
-        max_tokens: 2000,
+        max_tokens: 600,
         temperature: 0.7
       });
 
       const suggestions = JSON.parse(response.choices[0].message.content || '[]');
-      return this.formatSuggestions(suggestions);
+      const result = this.formatSuggestions(suggestions);
+      
+      // Cache the result
+      setCachedResponse(cacheKey, result);
+      
+      return result;
     } catch (error) {
       console.error('OpenAI API error:', error);
       throw new Error(`Failed to generate suggestions: ${error}`);
@@ -95,10 +129,18 @@ export class OpenAIService {
     subredditRules?: SubredditRules
   ): Promise<EngagementSuggestion[]> {
     try {
+      // Check cache first
+      const cacheKey = getCacheKey('engagement', { postId: post.id, userId: userProfile.username });
+      const cachedResult = getCachedResponse(cacheKey);
+      if (cachedResult) {
+        console.log('Using cached engagement suggestions');
+        return cachedResult;
+      }
+
       const prompt = this.buildEngagementPrompt(post, userProfile, subredditRules);
       
       const response = await getOpenAI().chat.completions.create({
-        model: 'gpt-4',
+        model: 'gpt-3.5-turbo',
         messages: [
           {
             role: 'system',
@@ -109,12 +151,17 @@ export class OpenAIService {
             content: prompt
           }
         ],
-        max_tokens: 1500,
+        max_tokens: 800,
         temperature: 0.7
       });
 
       const suggestions = JSON.parse(response.choices[0].message.content || '[]');
-      return this.formatEngagementSuggestions(suggestions, post.id);
+      const result = this.formatEngagementSuggestions(suggestions, post.id);
+      
+      // Cache the result
+      setCachedResponse(cacheKey, result);
+      
+      return result;
     } catch (error) {
       console.error('OpenAI engagement suggestion error:', error);
       throw new Error(`Failed to generate engagement suggestions: ${error}`);
@@ -131,44 +178,25 @@ export class OpenAIService {
     subredditRules?: SubredditRules
   ): Promise<EngagementSuggestion> {
     try {
-      const prompt = `
-You are helping a Reddit user refine their comment idea. Take their rough thoughts and create a well-crafted, engaging comment.
+      const prompt = `Improve this Reddit comment for r/${post.subreddit}:
 
-POST CONTEXT:
-Title: ${post.title}
-Content: ${post.content.substring(0, 500)}...
-Subreddit: r/${post.subreddit}
-${subredditRules ? `Rules: ${subredditRules.rules.map(r => r.shortName + ': ' + r.description).join('; ')}` : ''}
+POST: "${post.title}"
+USER COMMENT: "${rawInput}"
 
-USER INPUT: "${rawInput}"
-
-USER PROFILE:
-- Username: ${userProfile.username}
-- Karma: ${userProfile.totalKarma}
-- Account age: ${userProfile.accountCreated}
-
-Transform the user's input into a refined comment that:
-1. Maintains their authentic voice and opinion
-2. Is well-structured and engaging
-3. Adds value to the discussion
-4. Respects subreddit rules and culture
-5. Matches the user's communication style
-
-Return JSON with this format:
+Make it more engaging and valuable while keeping the user's authentic voice. Return JSON:
 {
-  "content": "refined comment text",
-  "reasoning": "why this approach works",
+  "content": "improved comment",
+  "reasoning": "brief explanation", 
   "confidence": 0.8,
   "ruleCompliance": true,
   "riskLevel": "low",
-  "estimatedReception": "positive - adds valuable perspective"
-}
-      `;
+  "estimatedReception": "positive"
+}`;
 
       const response = await getOpenAI().chat.completions.create({
-        model: 'gpt-4',
+        model: 'gpt-3.5-turbo',
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 800,
+        max_tokens: 300,
         temperature: 0.6
       });
 
@@ -210,7 +238,7 @@ Return JSON with this format:
       const response = await getOpenAI().chat.completions.create({
         model: 'gpt-3.5-turbo',
         messages: [{ role: 'user', content: prompt }],
-        max_tokens: 500,
+        max_tokens: 300,
         temperature: 0.8
       });
 
@@ -224,38 +252,24 @@ Return JSON with this format:
   private static buildSuggestionPrompt(request: SuggestionRequest): string {
     const { userProfile, subreddits, recentPosts } = request;
     
-    return `
-Generate 5 Reddit content suggestions for user "${userProfile.username}" based on their profile:
+    return `Generate 3 Reddit content suggestions for "${userProfile.username}" (${userProfile.karma} karma):
 
-USER PROFILE:
-- Username: ${userProfile.username}
-- Karma: ${userProfile.karma}
-- Account Age: ${userProfile.accountAge}
-- Recent Posts: ${recentPosts?.map(p => `"${p.title}" in ${p.subreddit} (${p.score} upvotes)`).join(', ') || 'None'}
+SUBREDDITS: ${subreddits.slice(0, 8).map(sub => sub.name).join(', ')}
+RECENT: ${recentPosts?.slice(0, 3).map(p => `"${p.title}" (${p.score} votes)`).join('; ') || 'None'}
 
-SUBSCRIBED SUBREDDITS:
-${subreddits.slice(0, 15).map(sub => `- r/${sub.name}: ${sub.description.substring(0, 100)}...`).join('\n')}
-
-Generate suggestions that:
-1. Match the user's demonstrated interests
-2. Are likely to get good engagement
-3. Provide value to the target communities
-4. Are realistic for this user's karma level
-
-Return JSON array with this exact format:
+Return JSON array:
 [
   {
     "id": "unique_id",
-    "type": "post|comment|engagement",
-    "title": "Suggestion title",
-    "content": "Detailed content or action",
-    "targetSubreddit": "subreddit_name",
-    "reasoning": "Why this would work",
+    "type": "post",
+    "title": "Title",
+    "content": "Brief content",
+    "targetSubreddit": "subreddit",
+    "reasoning": "Why effective",
     "confidence": 0.8,
     "estimatedEngagement": "10-50 upvotes"
   }
-]
-    `;
+]`;
   }
 
   private static buildEngagementPrompt(
@@ -263,48 +277,23 @@ Return JSON array with this exact format:
     userProfile: RedditProfile, 
     subredditRules?: SubredditRules
   ): string {
-    return `
-Generate 3 engagement suggestions for this Reddit post:
+    return `Generate 2 comment suggestions for r/${post.subreddit}:
 
-POST DETAILS:
-Title: ${post.title}
-Content: ${post.content.substring(0, 800)}${post.content.length > 800 ? '...' : ''}
-Subreddit: r/${post.subreddit}
-Author: u/${post.author}
-Score: ${post.score} (${Math.round(post.upvoteRatio * 100)}% upvoted)
-Comments: ${post.commentCount}
-Posted: ${post.created.toLocaleDateString()}
+"${post.title}"
+${post.content.substring(0, 200)}...
 
-${subredditRules ? `SUBREDDIT RULES:
-${subredditRules.rules.map(rule => `- ${rule.shortName}: ${rule.description}`).join('\n')}
-Submission Type: ${subredditRules.submissionType}` : ''}
-
-USER CONTEXT:
-Username: ${userProfile.username}
-Total Karma: ${userProfile.totalKarma}
-Account Age: ${userProfile.accountCreated.toDateString()}
-Recent Activity: ${userProfile.recentPosts.slice(0, 3).map(p => p.subreddit).join(', ')}
-
-Generate suggestions that:
-1. Add genuine value to the discussion
-2. Match the user's expertise level and interests
-3. Respect subreddit culture and rules
-4. Are authentic and not generic
-5. Have high potential for positive reception
-
-Return JSON array with this exact format:
+JSON array:
 [
   {
-    "type": "thoughtful_comment|question|experience_share|helpful_advice",
-    "content": "specific comment text",
-    "reasoning": "why this approach works",
+    "type": "question",
+    "content": "comment text",
+    "reasoning": "why good",
     "confidence": 0.8,
     "ruleCompliance": true,
-    "riskLevel": "low|medium|high",
-    "estimatedReception": "likely positive - adds expertise"
+    "riskLevel": "low",
+    "estimatedReception": "positive"
   }
-]
-    `;
+]`;
   }
 
   private static formatEngagementSuggestions(rawSuggestions: any[], postId: string): EngagementSuggestion[] {

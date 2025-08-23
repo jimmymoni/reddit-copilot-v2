@@ -31,7 +31,9 @@
       "mcp__playwright__browser_install",
       "Bash(set PORT=3001)",
       "Bash(powershell:*)",
-      "Bash(git reset:*)"
+      "Bash(git reset:*)",
+      "Bash(node:*)",
+      "Bash(time curl:*)"
     ],
     "deny": [],
     "ask": []

@@ -49,21 +49,12 @@ export interface SubredditFlair {
   css_class?: string
 }
 
-export interface SubredditRules {
+export interface SimpleSubredditRules {
   subreddit: string
-  rules: SubredditRule[]
-  description: string
-  submissionType: string
-  flairs: SubredditFlair[]
-  postRequirements?: {
-    minTitleLength?: number
-    maxTitleLength?: number
-    minBodyLength?: number
-    maxBodyLength?: number
-    flairRequired?: boolean
-    allowedDomains?: string[]
-    restrictedWords?: string[]
-  }
+  flairRequired: boolean
+  minLength: number
+  commonFlairs: string[]
+  keyRules: string[]
 }
 
 interface HomeFeedProps {
@@ -83,23 +74,22 @@ export default function HomeFeed({ redditId }: HomeFeedProps) {
   const [userInput, setUserInput] = useState('')
   const [voiceInput, setVoiceInput] = useState(false)
   const [showModal, setShowModal] = useState(false)
-  const [activeFilter, setActiveFilter] = useState('business_opportunities')
-  const [filterPresets, setFilterPresets] = useState<any[]>([])
+  const [activeFilter, setActiveFilter] = useState('')
+  const [subscribedSubreddits, setSubscribedSubreddits] = useState<any[]>([])
   const [feedStats, setFeedStats] = useState<any>(null)
   const [showSubredditProfile, setShowSubredditProfile] = useState(false)
   const [selectedSubreddit, setSelectedSubreddit] = useState<string>('')
   const [isInitialized, setIsInitialized] = useState(false)
-  const [showFiltersDropdown, setShowFiltersDropdown] = useState(false)
-  const [selectedFilters, setSelectedFilters] = useState<string[]>(['business_opportunities'])
-  const [subredditRules, setSubredditRules] = useState<SubredditRules | null>(null)
+  const [showSubredditsDropdown, setShowSubredditsDropdown] = useState(false)
+  const [subredditRules, setSubredditRules] = useState<SimpleSubredditRules | null>(null)
   const [loadingRules, setLoadingRules] = useState(false)
-  const [selectedFlair, setSelectedFlair] = useState<SubredditFlair | null>(null)
+  const [selectedFlair, setSelectedFlair] = useState<string | null>(null)
   const [ruleViolations, setRuleViolations] = useState<string[]>([])
   const [showRulesPanel, setShowRulesPanel] = useState(true)
 
-  const fetchHomeFeed = async (filter = activeFilter, forceRefresh = false) => {
+  const fetchHomeFeed = async (subredditFilter = activeFilter, forceRefresh = false) => {
     // Check cache first
-    const cacheKey = `${redditId}-${filter}`
+    const cacheKey = `${redditId}-${subredditFilter}`
     const cached = feedCache.get(cacheKey)
     const now = Date.now()
     
@@ -114,9 +104,13 @@ export default function HomeFeed({ redditId }: HomeFeedProps) {
     
     setLoading(true)
     try {
-      console.log('Fetching home feed with filter:', filter, 'for redditId:', redditId)
+      console.log('Fetching home feed with subreddit filter:', subredditFilter, 'for redditId:', redditId)
       
-      const response = await fetch(`http://localhost:3001/api/homefeed?filter=${filter}&limit=300`, {
+      const url = subredditFilter 
+        ? `http://localhost:3001/api/homefeed?subreddit=${subredditFilter}&limit=300`
+        : `http://localhost:3001/api/homefeed?limit=300`
+      
+      const response = await fetch(url, {
         headers: {
           'x-reddit-id': redditId
         }
@@ -157,41 +151,35 @@ export default function HomeFeed({ redditId }: HomeFeedProps) {
     }
   }
 
-  const fetchFilterPresets = async () => {
+  const fetchSubscribedSubreddits = async () => {
     try {
-      const response = await fetch('http://localhost:3001/api/homefeed/filters', {
+      const response = await fetch('http://localhost:3001/api/homefeed/subreddits', {
         headers: {
           'x-reddit-id': redditId
         }
       })
       
       if (!response.ok) {
-        // Use default filter if API fails
-        setFilterPresets([{
-          id: 'business_opportunities',
-          name: 'Business Opportunities',
-          description: 'High-value posts where you can offer expertise or find leads'
-        }])
+        console.error('Failed to fetch subreddits')
         return
       }
       
       const data = await response.json()
-      setFilterPresets(data.presets || [])
+      setSubscribedSubreddits(data.subreddits || [])
     } catch (error) {
-      console.error('Failed to fetch filter presets:', error)
-      // Fallback to default filter
-      setFilterPresets([{
-        id: 'business_opportunities',
-        name: 'Business Opportunities',
-        description: 'High-value posts where you can offer expertise or find leads'
-      }])
+      console.error('Failed to fetch subscribed subreddits:', error)
     }
   }
 
-  const handleFilterChange = (filterId: string) => {
-    if (filterId === activeFilter) return // Prevent unnecessary requests
-    setActiveFilter(filterId)
-    fetchHomeFeed(filterId)
+  const handleSubredditFilter = (subredditName: string) => {
+    if (subredditName === activeFilter) return // Prevent unnecessary requests
+    setActiveFilter(subredditName)
+    fetchHomeFeed(subredditName)
+  }
+
+  const clearFilter = () => {
+    setActiveFilter('')
+    fetchHomeFeed('')
   }
 
   const openCommentHelper = (post: RedditPost) => {
@@ -229,27 +217,13 @@ export default function HomeFeed({ redditId }: HomeFeedProps) {
     if (!subredditRules) return []
     
     const violations = []
-    const requirements = subredditRules.postRequirements
     
-    if (requirements?.minBodyLength && comment.length < requirements.minBodyLength) {
-      violations.push(`Comment must be at least ${requirements.minBodyLength} characters`)
+    if (subredditRules.minLength && comment.length < subredditRules.minLength) {
+      violations.push(`Comment must be at least ${subredditRules.minLength} characters`)
     }
     
-    if (requirements?.maxBodyLength && comment.length > requirements.maxBodyLength) {
-      violations.push(`Comment must be no more than ${requirements.maxBodyLength} characters`)
-    }
-    
-    if (requirements?.flairRequired && !selectedFlair) {
+    if (subredditRules.flairRequired && !selectedFlair) {
       violations.push('Flair selection is required for this subreddit')
-    }
-    
-    if (requirements?.restrictedWords) {
-      const foundWords = requirements.restrictedWords.filter(word => 
-        comment.toLowerCase().includes(word.toLowerCase())
-      )
-      if (foundWords.length > 0) {
-        violations.push(`Contains restricted words: ${foundWords.join(', ')}`)
-      }
     }
     
     return violations
@@ -260,7 +234,7 @@ export default function HomeFeed({ redditId }: HomeFeedProps) {
     setLoadingSuggestions(true)
     
     try {
-      const response = await fetch('/api/homefeed/engagement-suggestions', {
+      const response = await fetch('http://localhost:3001/api/homefeed/engagement-suggestions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -286,7 +260,7 @@ export default function HomeFeed({ redditId }: HomeFeedProps) {
     setLoading(true)
     
     try {
-      const response = await fetch('/api/homefeed/improve-comment', {
+      const response = await fetch('http://localhost:3001/api/homefeed/improve-comment', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -319,13 +293,13 @@ export default function HomeFeed({ redditId }: HomeFeedProps) {
       return
     }
     
-    const confirmMessage = `Post this comment to r/${selectedPost?.subreddit}?${selectedFlair ? `\nFlair: ${selectedFlair.text}` : ''}\n\n"${userInput.substring(0, 200)}..."`
+    const confirmMessage = `Post this comment to r/${selectedPost?.subreddit}?${selectedFlair ? `\nFlair: ${selectedFlair}` : ''}\n\n"${userInput.substring(0, 200)}..."`
     const confirmed = window.confirm(confirmMessage)
     
     if (!confirmed) return
 
     try {
-      const response = await fetch('/api/homefeed/comment', {
+      const response = await fetch('http://localhost:3001/api/homefeed/comment', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -334,10 +308,7 @@ export default function HomeFeed({ redditId }: HomeFeedProps) {
         body: JSON.stringify({ 
           postId: selectedPost?.id, 
           content: userInput.trim(),
-          flair: selectedFlair ? {
-            id: selectedFlair.id,
-            text: selectedFlair.text
-          } : null
+          flair: selectedFlair || null
         })
       })
       
@@ -391,7 +362,7 @@ export default function HomeFeed({ redditId }: HomeFeedProps) {
   useEffect(() => {
     if (!isInitialized && redditId) {
       setIsInitialized(true)
-      fetchFilterPresets()
+      fetchSubscribedSubreddits()
       fetchHomeFeed()
     }
   }, [redditId, isInitialized])
@@ -430,191 +401,136 @@ export default function HomeFeed({ redditId }: HomeFeedProps) {
         className="min-h-screen"
         onClick={(e) => {
           // Close dropdown when clicking outside
-          if (showFiltersDropdown && !e.target.closest('[data-dropdown]')) {
-            setShowFiltersDropdown(false)
+          if (showSubredditsDropdown && !e.target.closest('[data-dropdown]')) {
+            setShowSubredditsDropdown(false)
           }
         }}
       >
         {/* Full Width Content Area - No Sidebar */}
         <div className="flex-1 min-h-screen">
-          {/* Compact Header with Filters Dropdown */}
+          {/* Header with Subreddit Filter */}
           <div className="bg-white/60 backdrop-blur-sm border-b border-slate-200/50 px-6 py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-6">
                 <div>
                   <h2 className="text-xl font-bold text-slate-900 mb-1 flex items-center">
                     <span className="mr-2 text-lg">🏠</span>
-                    Business Feed
+                    {activeFilter ? `r/${activeFilter}` : 'Home Feed'}
                     <span className="ml-2 text-sm font-normal text-slate-500">({posts.length})</span>
                   </h2>
                   {feedStats && (
                     <p className="text-slate-600 text-sm">
-                      Filtered {feedStats.filtered} from {feedStats.totalScanned} 
-                      <span className="text-violet-600 font-semibold"> ({feedStats.efficiency}%)</span>
+                      {activeFilter ? `Posts from r/${activeFilter}` : `Showing ${feedStats.filtered} from ${feedStats.totalScanned} posts`}
+                      {!activeFilter && (
+                        <span className="text-violet-600 font-semibold"> ({feedStats.efficiency}%)</span>
+                      )}
                     </p>
                   )}
                 </div>
                 
-                {/* Filters Dropdown */}
+                {/* Subreddit Filter Dropdown */}
                 <div className="relative" data-dropdown>
                   <button
-                    onClick={() => setShowFiltersDropdown(!showFiltersDropdown)}
+                    onClick={() => setShowSubredditsDropdown(!showSubredditsDropdown)}
                     className="flex items-center space-x-2 px-4 py-2 rounded-xl font-medium text-sm transition-all duration-200 text-slate-600 hover:text-slate-900 hover:bg-white/80 border border-slate-200/60 bg-white/50"
                   >
-                    <span>🎛</span>
-                    <span>Filters</span>
-                    <span className={`text-xs transition-transform duration-200 ${showFiltersDropdown ? 'rotate-180' : ''}`}>▼</span>
+                    <span>📋</span>
+                    <span>Subreddits</span>
+                    <span className={`text-xs transition-transform duration-200 ${showSubredditsDropdown ? 'rotate-180' : ''}`}>▼</span>
                   </button>
                   
-                  {/* Modern Minimal Dropdown */}
-                  {showFiltersDropdown && (
+                  {/* Subreddit Dropdown */}
+                  {showSubredditsDropdown && (
                     <div className="absolute top-full left-1/2 transform -translate-x-1/2 sm:left-0 sm:transform-none sm:translate-x-0 mt-2 w-[calc(100vw-2rem)] sm:w-80 md:w-96 max-w-sm sm:max-w-none bg-white/95 backdrop-blur-lg rounded-2xl shadow-2xl border border-white/20 overflow-hidden z-50">
-                      {/* Header with clean typography */}
+                      {/* Header */}
                       <div className="px-4 sm:px-5 py-3 sm:py-4 bg-gradient-to-r from-slate-50/80 to-white/80 border-b border-slate-100/50">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center space-x-2">
                             <div className="w-2 h-2 bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full"></div>
-                            <span className="font-semibold text-slate-800 text-sm">Content Filters</span>
+                            <span className="font-semibold text-slate-800 text-sm">Your Subreddits</span>
                           </div>
-                          <div className="flex items-center space-x-2">
-                            <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded-full">
-                              {selectedFilters.length} active
-                            </span>
-                          </div>
+                          <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded-full">
+                            {subscribedSubreddits.length} total
+                          </span>
                         </div>
                       </div>
                       
-                      {/* Scrollable Filter Options */}
+                      {/* Clear Filter Option */}
+                      <div className="px-4 sm:px-5 py-3 border-b border-slate-100/50">
+                        <button
+                          onClick={() => {
+                            clearFilter()
+                            setShowSubredditsDropdown(false)
+                          }}
+                          className={`w-full p-3 rounded-xl text-left transition-all duration-200 ${
+                            !activeFilter 
+                              ? 'bg-gradient-to-r from-violet-50 to-indigo-50 border-2 border-violet-200 shadow-md' 
+                              : 'bg-white/60 border border-slate-200/60 hover:bg-slate-50/80'
+                          }`}
+                        >
+                          <div className="flex items-center space-x-3">
+                            <span className="text-lg">🏠</span>
+                            <div>
+                              <span className="font-medium text-sm text-slate-800">All Posts</span>
+                              <p className="text-xs text-slate-500">Show posts from all subreddits</p>
+                            </div>
+                          </div>
+                        </button>
+                      </div>
+                      
+                      {/* Subreddit List */}
                       <div className="px-4 sm:px-5 py-3 sm:py-4 max-h-64 sm:max-h-72 overflow-y-auto">
                         <div className="space-y-2">
-                          {filterPresets.map((preset) => {
-                            const isSelected = selectedFilters.includes(preset.id)
-                            
-                            // Modern icon mapping with subtle styling
-                            const getFilterBadge = (id: string) => {
-                              const badges = {
-                                'business_opportunities': { icon: '💼', color: 'bg-blue-50 text-blue-700 border-blue-200' },
-                                'tech_discussions': { icon: '💻', color: 'bg-purple-50 text-purple-700 border-purple-200' },
-                                'growth_marketing': { icon: '📈', color: 'bg-green-50 text-green-700 border-green-200' },
-                                'investment_finance': { icon: '💰', color: 'bg-yellow-50 text-yellow-700 border-yellow-200' },
-                                'custom_business': { icon: '⚙️', color: 'bg-gray-50 text-gray-700 border-gray-200' }
-                              }
-                              return badges[id] || { icon: '📋', color: 'bg-slate-50 text-slate-700 border-slate-200' }
-                            }
-                            
-                            const badge = getFilterBadge(preset.id)
+                          {subscribedSubreddits.map((subreddit) => {
+                            const isActive = activeFilter === subreddit.name
                             
                             return (
-                              <div 
-                                key={preset.id}
+                              <button
+                                key={subreddit.name}
                                 onClick={() => {
-                                  if (isSelected) {
-                                    setSelectedFilters(selectedFilters.filter(f => f !== preset.id))
-                                  } else {
-                                    setSelectedFilters([...selectedFilters, preset.id])
-                                  }
+                                  handleSubredditFilter(subreddit.name)
+                                  setShowSubredditsDropdown(false)
                                 }}
-                                className={`group relative p-2 sm:p-3 rounded-xl cursor-pointer transition-all duration-200 hover:scale-[1.02] touch-manipulation ${
-                                  isSelected 
+                                className={`w-full p-3 rounded-xl text-left transition-all duration-200 hover:scale-[1.01] ${
+                                  isActive 
                                     ? 'bg-gradient-to-r from-violet-50 to-indigo-50 border-2 border-violet-200 shadow-md' 
                                     : 'bg-white/60 border border-slate-200/60 hover:bg-slate-50/80 hover:border-slate-300/60'
                                 }`}
                               >
-                                <div className="flex items-center justify-between">
-                                  <div className="flex items-center space-x-3">
-                                    {/* Custom checkbox */}
-                                    <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-all duration-200 ${
-                                      isSelected 
-                                        ? 'bg-gradient-to-r from-violet-500 to-indigo-500 border-violet-500' 
-                                        : 'border-slate-300 bg-white hover:border-violet-300'
-                                    }`}>
-                                      {isSelected && (
-                                        <svg className="w-2.5 h-2.5 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                                        </svg>
-                                      )}
-                                    </div>
-                                    
-                                    {/* Content */}
-                                    <div className="flex-1">
-                                      <div className="flex items-center space-x-2 mb-1">
-                                        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium border ${badge.color}`}>
-                                          {badge.icon}
-                                        </span>
-                                        <span className={`font-medium text-sm transition-colors ${
-                                          isSelected ? 'text-violet-900' : 'text-slate-800'
-                                        }`}>
-                                          {preset.name}
-                                        </span>
-                                      </div>
-                                      <p className={`text-xs leading-relaxed transition-colors ${
-                                        isSelected ? 'text-violet-700/80' : 'text-slate-500'
+                                <div className="flex items-center space-x-3">
+                                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
+                                    isActive ? 'bg-violet-100 text-violet-600' : 'bg-slate-100 text-slate-600'
+                                  }`}>
+                                    r/
+                                  </div>
+                                  <div className="flex-1">
+                                    <div className="flex items-center justify-between">
+                                      <span className={`font-medium text-sm ${
+                                        isActive ? 'text-violet-900' : 'text-slate-800'
                                       }`}>
-                                        {preset.description}
-                                      </p>
+                                        {subreddit.name}
+                                      </span>
+                                      <span className="text-xs text-slate-500">
+                                        {subreddit.subscribers ? `${Math.round(subreddit.subscribers/1000)}k` : ''}
+                                      </span>
                                     </div>
+                                    <p className={`text-xs leading-relaxed mt-1 line-clamp-2 ${
+                                      isActive ? 'text-violet-700/80' : 'text-slate-500'
+                                    }`}>
+                                      {subreddit.title || subreddit.description || `Posts from r/${subreddit.name}`}
+                                    </p>
                                   </div>
                                 </div>
-                              </div>
+                              </button>
                             )
                           })}
-                        </div>
-                      </div>
-                      
-                      {/* Compact Status Bar & Sticky Action */}
-                      <div className="border-t border-slate-100/80 bg-gradient-to-r from-slate-50/90 to-white/90 backdrop-blur-sm">
-                        {/* Status Bar */}
-                        {feedStats && (
-                          <div className="px-4 sm:px-5 py-2 sm:py-3 border-b border-slate-100/50">
-                            <div className="flex items-center justify-center space-x-3 sm:space-x-6 text-xs">
-                              <div className="flex items-center space-x-1.5">
-                                <div className="w-1.5 h-1.5 bg-violet-400 rounded-full"></div>
-                                <span className="text-slate-600 font-medium">Found</span>
-                                <span className="bg-violet-100 text-violet-700 px-1.5 py-0.5 rounded font-bold">
-                                  {feedStats.filtered}
-                                </span>
-                              </div>
-                              <div className="w-px h-4 bg-slate-200"></div>
-                              <div className="flex items-center space-x-1.5">
-                                <div className="w-1.5 h-1.5 bg-slate-400 rounded-full"></div>
-                                <span className="text-slate-600 font-medium">Scanned</span>
-                                <span className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-bold">
-                                  {feedStats.totalScanned}
-                                </span>
-                              </div>
-                              <div className="w-px h-4 bg-slate-200"></div>
-                              <div className="flex items-center space-x-1.5">
-                                <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full"></div>
-                                <span className="text-slate-600 font-medium">Rate</span>
-                                <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">
-                                  {feedStats.efficiency}%
-                                </span>
-                              </div>
+                          
+                          {subscribedSubreddits.length === 0 && (
+                            <div className="text-center py-8">
+                              <div className="text-4xl mb-3">📱</div>
+                              <p className="text-sm text-slate-500">Loading subreddits...</p>
                             </div>
-                          </div>
-                        )}
-                        
-                        {/* Sticky Apply Button */}
-                        <div className="px-4 sm:px-5 py-3 sm:py-4">
-                          <button
-                            onClick={() => {
-                              setShowFiltersDropdown(false)
-                              if (selectedFilters.length > 0) {
-                                handleFilterChange(selectedFilters[0])
-                              }
-                            }}
-                            disabled={selectedFilters.length === 0}
-                            className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 disabled:from-slate-300 disabled:to-slate-400 text-white font-semibold py-3 px-4 rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl disabled:shadow-none transform hover:scale-[1.02] active:scale-[0.98] disabled:scale-100"
-                          >
-                            <span className="flex items-center justify-center space-x-2">
-                              <span>Apply Filters</span>
-                              {selectedFilters.length > 0 && (
-                                <span className="bg-white/20 px-2 py-0.5 rounded-full text-xs">
-                                  {selectedFilters.length}
-                                </span>
-                              )}
-                            </span>
-                          </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -924,55 +840,46 @@ export default function HomeFeed({ redditId }: HomeFeedProps) {
                         </div>
                       ) : subredditRules ? (
                         <div className="space-y-3">
-                          {/* Flair Selection */}
-                          {subredditRules.flairs && subredditRules.flairs.length > 0 && (
+                          {/* Flair Selection - Simplified */}
+                          {subredditRules.commonFlairs && subredditRules.commonFlairs.length > 0 && (
                             <div className="space-y-2">
                               <label className="text-xs font-medium text-gray-700">
-                                Select Flair {subredditRules.postRequirements?.flairRequired && <span className="text-red-500">*</span>}
+                                Select Flair {subredditRules.flairRequired && <span className="text-red-500">*</span>}
                               </label>
                               <div className="grid grid-cols-2 gap-2">
-                                {subredditRules.flairs.slice(0, 6).map((flair) => (
+                                {subredditRules.commonFlairs.slice(0, 4).map((flair, index) => (
                                   <button
-                                    key={flair.id}
-                                    onClick={() => setSelectedFlair(selectedFlair?.id === flair.id ? null : flair)}
+                                    key={index}
+                                    onClick={() => setSelectedFlair(selectedFlair === flair ? null : flair)}
                                     className={`px-3 py-2 text-xs rounded-lg border transition-all ${
-                                      selectedFlair?.id === flair.id
+                                      selectedFlair === flair
                                         ? 'bg-violet-100 border-violet-300 text-violet-700'
                                         : 'bg-white border-gray-200 text-gray-700 hover:border-violet-200'
                                     }`}
                                   >
-                                    {flair.text}
+                                    {flair}
                                   </button>
                                 ))}
                               </div>
                             </div>
                           )}
                           
-                          {/* Key Rules */}
+                          {/* Key Rules - Simplified */}
                           <div className="space-y-2">
                             <label className="text-xs font-medium text-gray-700">Key Rules</label>
                             <div className="max-h-24 overflow-y-auto space-y-1">
-                              {subredditRules.rules.slice(0, 3).map((rule, index) => (
+                              {subredditRules.keyRules.slice(0, 3).map((rule, index) => (
                                 <div key={index} className="text-xs text-gray-600 bg-white/60 rounded px-2 py-1">
-                                  <span className="font-medium">{rule.shortName}:</span> {rule.description.substring(0, 80)}...
+                                  {rule}
                                 </div>
                               ))}
                             </div>
                           </div>
                           
-                          {/* Posting Requirements */}
-                          {subredditRules.postRequirements && (
-                            <div className="grid grid-cols-2 gap-2 text-xs">
-                              {subredditRules.postRequirements.minBodyLength && (
-                                <div className="bg-white/60 rounded px-2 py-1">
-                                  <span className="font-medium">Min Length:</span> {subredditRules.postRequirements.minBodyLength} chars
-                                </div>
-                              )}
-                              {subredditRules.postRequirements.maxBodyLength && (
-                                <div className="bg-white/60 rounded px-2 py-1">
-                                  <span className="font-medium">Max Length:</span> {subredditRules.postRequirements.maxBodyLength} chars
-                                </div>
-                              )}
+                          {/* Posting Requirements - Simplified */}
+                          {subredditRules.minLength > 0 && (
+                            <div className="bg-white/60 rounded px-2 py-1 text-xs">
+                              <span className="font-medium">Min Length:</span> {subredditRules.minLength} characters
                             </div>
                           )}
                         </div>

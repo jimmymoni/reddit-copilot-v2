@@ -3,6 +3,7 @@ import { RedditService } from '../services/reddit';
 import { OpenAIService } from '../services/openai';
 import { authenticateUser, AuthenticatedRequest } from '../middleware/auth';
 import { ContentFilterService, FILTER_PRESETS, BUSINESS_CATEGORIES } from '../services/contentFilter';
+import { getSubredditData } from '../services/subredditData';
 
 const router = Router();
 
@@ -15,12 +16,22 @@ router.get('/', authenticateUser, async (req: AuthenticatedRequest, res) => {
     const redditId = req.user!.redditId;
     const limit = parseInt(req.query.limit as string) || 200;
     const filterPreset = req.query.filter as string || 'business_opportunities';
+    const subredditFilter = req.query.subreddit as string;
 
     // Get raw posts
     const rawPosts = await RedditService.getHomeFeed(redditId, limit * 2); // Get more to have enough after filtering
     
-    // Apply filtering
-    const filteredPosts = ContentFilterService.getFilteredFeed(rawPosts, filterPreset);
+    let filteredPosts;
+    
+    if (subredditFilter) {
+      // Filter by specific subreddit
+      filteredPosts = rawPosts.filter(post => 
+        post.subreddit.toLowerCase() === subredditFilter.toLowerCase()
+      );
+    } else {
+      // Apply content filtering
+      filteredPosts = ContentFilterService.getFilteredFeed(rawPosts, filterPreset);
+    }
     
     // Limit final results
     const finalPosts = filteredPosts.slice(0, limit);
@@ -30,7 +41,7 @@ router.get('/', authenticateUser, async (req: AuthenticatedRequest, res) => {
       posts: finalPosts,
       count: finalPosts.length,
       totalScanned: rawPosts.length,
-      filterApplied: filterPreset
+      filterApplied: subredditFilter ? `subreddit:${subredditFilter}` : filterPreset
     });
   } catch (error) {
     console.error('Home feed error:', error);
@@ -197,34 +208,32 @@ router.post('/improve-comment', authenticateUser, async (req: AuthenticatedReque
 
 /**
  * GET /api/homefeed/subreddit-rules/:subreddit
- * Get rules for a specific subreddit
+ * Get rules for a specific subreddit (simplified for 2-day sprint)
  */
 router.get('/subreddit-rules/:subreddit', authenticateUser, async (req: AuthenticatedRequest, res) => {
   try {
     const { subreddit } = req.params;
-    const redditId = req.user!.redditId;
     
-    const rules = await RedditService.getSubredditRules(redditId, subreddit);
+    // Use hardcoded data for quick implementation
+    const subredditData = getSubredditData(subreddit);
     
     res.json({
       success: true,
-      rules
+      rules: {
+        subreddit: subreddit,
+        flairRequired: subredditData.flairRequired,
+        minLength: subredditData.minLength || 0,
+        commonFlairs: subredditData.commonFlairs,
+        keyRules: subredditData.keyRules
+      }
     });
   } catch (error) {
     console.error('Subreddit rules error:', error);
-    if (error instanceof Error) {
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch subreddit rules',
-        message: error.message
-      });
-    } else {
-      res.status(500).json({
-        success: false,
-        error: 'Failed to fetch subreddit rules',
-        message: 'Unknown error occurred'
-      });
-    }
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch subreddit rules',
+      message: 'Internal server error'
+    });
   }
 });
 
@@ -275,6 +284,35 @@ router.post('/comment', authenticateUser, async (req: AuthenticatedRequest, res)
         message: 'Unknown error occurred'
       });
     }
+  }
+});
+
+/**
+ * GET /api/homefeed/subreddits
+ * Get user's subscribed subreddits for filtering
+ */
+router.get('/subreddits', authenticateUser, async (req: AuthenticatedRequest, res) => {
+  try {
+    const redditId = req.user!.redditId;
+    
+    // Get user's subscribed subreddits
+    const subreddits = await RedditService.getUserSubreddits(redditId);
+    
+    res.json({
+      success: true,
+      subreddits: subreddits.map(sub => ({
+        name: sub.name,
+        title: sub.title,
+        subscribers: sub.subscribers,
+        description: sub.description
+      }))
+    });
+  } catch (error) {
+    console.error('Subreddits fetch error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch subreddits'
+    });
   }
 });
 

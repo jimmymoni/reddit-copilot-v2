@@ -438,7 +438,7 @@ export class RedditService {
       };
       
       // Check if flair is required by examining subreddit rules
-      const hasFlairRule = rules.some((rule: any) => 
+      const hasFlairRule = Array.isArray(rules) && rules.some((rule: any) => 
         rule.description?.toLowerCase().includes('flair') ||
         rule.short_name?.toLowerCase().includes('flair')
       );
@@ -449,11 +449,11 @@ export class RedditService {
       
       return {
         subreddit: subreddit,
-        rules: rules.map((rule: any) => ({
+        rules: Array.isArray(rules) ? rules.map((rule: any) => ({
           shortName: rule.short_name || rule.violation_reason,
           description: rule.description,
           kind: rule.kind
-        })),
+        })) : [],
         description: sub.description || '',
         submissionType: sub.submission_type || 'any',
         flairs: flairTemplates.map((flair: any) => ({
