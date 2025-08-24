@@ -93,7 +93,8 @@ export default function HomeFeed({ redditId }: HomeFeedProps) {
     const cached = feedCache.get(cacheKey)
     const now = Date.now()
     
-    if (!forceRefresh && cached && (now - cached.timestamp) < CACHE_DURATION) {
+    // Don't use cache for failed requests or if forcing refresh
+    if (!forceRefresh && cached && cached.posts.length > 0 && (now - cached.timestamp) < CACHE_DURATION) {
       console.log('Using cached feed data')
       setPosts(cached.posts)
       setFeedStats(cached.stats)
@@ -117,10 +118,15 @@ export default function HomeFeed({ redditId }: HomeFeedProps) {
       })
       
       if (!response.ok) {
-        throw new Error(`Failed to fetch home feed: ${response.status}`)
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.message || `Failed to fetch home feed: ${response.status}`)
       }
       
       const data = await response.json()
+      
+      if (!data.success || !data.posts) {
+        throw new Error(data.message || 'Invalid response from server')
+      }
       
       const processedPosts = data.posts.map((post: any) => ({
         ...post,
@@ -128,24 +134,37 @@ export default function HomeFeed({ redditId }: HomeFeedProps) {
       }))
       
       const stats = {
-        totalScanned: data.totalScanned,
-        filtered: data.count,
-        efficiency: Math.round((data.count / data.totalScanned) * 100)
+        totalScanned: data.totalScanned || processedPosts.length,
+        filtered: data.count || processedPosts.length,
+        efficiency: data.totalScanned ? Math.round((processedPosts.length / data.totalScanned) * 100) : 100
       }
       
-      // Cache the results
-      feedCache.set(cacheKey, {
-        posts: processedPosts,
-        stats,
-        timestamp: now
-      })
+      // Only cache successful results with actual posts
+      if (processedPosts.length > 0) {
+        feedCache.set(cacheKey, {
+          posts: processedPosts,
+          stats,
+          timestamp: now
+        })
+      }
       
       setPosts(processedPosts)
       setFeedStats(stats)
+      
+      console.log(`Successfully loaded ${processedPosts.length} posts`)
     } catch (error) {
       console.error('Failed to fetch home feed:', error)
-      // Don't show alert for every error, just log it
-      setFeedStats({ totalScanned: 0, filtered: 0, efficiency: 0 })
+      
+      // Clear any cached failed results
+      feedCache.delete(cacheKey)
+      
+      // Show more specific error messages
+      if (error.message?.includes('User not found') || error.message?.includes('access_token')) {
+        console.error('Authentication error - user may need to re-authenticate')
+        setFeedStats({ totalScanned: 0, filtered: 0, efficiency: 0, error: 'Authentication required' })
+      } else {
+        setFeedStats({ totalScanned: 0, filtered: 0, efficiency: 0, error: 'Network error' })
+      }
     } finally {
       setLoading(false)
     }
@@ -174,12 +193,14 @@ export default function HomeFeed({ redditId }: HomeFeedProps) {
   const handleSubredditFilter = (subredditName: string) => {
     if (subredditName === activeFilter) return // Prevent unnecessary requests
     setActiveFilter(subredditName)
-    fetchHomeFeed(subredditName)
+    // Force refresh to bypass cache when changing filters
+    fetchHomeFeed(subredditName, true)
   }
 
   const clearFilter = () => {
     setActiveFilter('')
-    fetchHomeFeed('')
+    // Force refresh to bypass cache when clearing filter
+    fetchHomeFeed('', true)
   }
 
   const openCommentHelper = (post: RedditPost) => {

@@ -81,19 +81,21 @@ export interface SubredditRules {
 
 export class RedditService {
   // Search subreddit for posts containing keywords
-  async searchSubreddit(redditId: string, subreddit: string, query: string, timeframe: string = 'week') {
-    const reddit = await this.getRedditInstance(redditId);
+  static async searchSubreddit(redditId: string, subreddit: string, query: string, timeframe: string = 'week') {
+    const reddit = await this.getRedditClient(redditId);
     
     try {
       const timeParam = this.getTimeParameter(timeframe);
       const searchResults = await reddit.getSubreddit(subreddit).search({
         query,
         time: timeParam,
-        sort: 'relevance',
-        limit: 25
+        sort: 'relevance'
       });
+      
+      // Limit results after fetching
+      const limitedResults = searchResults.slice(0, 25);
 
-      return searchResults.map((post: any) => ({
+      return limitedResults.map((post: any) => ({
         id: post.id,
         title: post.title,
         selftext: post.selftext || '',
@@ -112,7 +114,7 @@ export class RedditService {
     }
   }
 
-  private getTimeParameter(timeframe: string): 'hour' | 'day' | 'week' | 'month' | 'year' | 'all' {
+  private static getTimeParameter(timeframe: string): 'hour' | 'day' | 'week' | 'month' | 'year' | 'all' {
     switch (timeframe) {
       case 'day': return 'day';
       case 'week': return 'week';
@@ -276,77 +278,154 @@ export class RedditService {
    * Get home feed posts from user's subscribed subreddits
    */
   static async getHomeFeed(redditId: string, limit: number = 200): Promise<RedditPost[]> {
-    const reddit = await this.getRedditClient(redditId);
+    console.log(`Starting getHomeFeed for redditId: ${redditId}, limit: ${limit}`);
     
     try {
+      const reddit = await this.getRedditClient(redditId);
+      console.log('Reddit client obtained successfully');
+      
       // Get user's subscribed subreddits
       const subreddits = await this.getUserSubreddits(redditId);
+      console.log(`Found ${subreddits.length} subscribed subreddits`);
+      
+      if (subreddits.length === 0) {
+        console.warn('User has no subscribed subreddits, using fallback approach');
+        return await this.getFallbackPosts(reddit, limit);
+      }
       
       // Maximum Reddit API efficiency approach
       const allPosts: RedditPost[] = [];
       
       // BALANCED APPROACH: Fetch from more subreddits but with delays
-      const topSubs = subreddits.slice(0, 4); // Increase to 4 subreddits for more content
+      const topSubs = subreddits.slice(0, 6); // Increased for more content variety
+      console.log(`Fetching from top ${topSubs.length} subreddits:`, topSubs.map(s => s.name).join(', '));
       
-      // Sequential fetching with delays to prevent rate limiting
+      // Sequential fetching with better error handling
       for (let i = 0; i < topSubs.length; i++) {
         const sub = topSubs[i];
         try {
-          // Add delay between requests (except first one)
+          // Add delay between requests to prevent rate limiting
           if (i > 0) {
-            await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second delay
+            await new Promise(resolve => setTimeout(resolve, 800)); // Slightly faster but safe
           }
           
-          // Get fresh posts from this subreddit - mix of new and hot
-          // @ts-ignore: Snoowrap types are complex
-          const newPosts = await reddit.getSubreddit(sub.name).getNew({ limit: 20 });
-          // @ts-ignore: Snoowrap types are complex
-          const hotPosts = await reddit.getSubreddit(sub.name).getHot({ limit: 10 });
-          // Combine new and hot posts, prioritizing recent content
-          const combinedPosts = [...newPosts, ...hotPosts];
-          const formattedPosts = combinedPosts.map((post: any) => this.formatRedditPost(post));
+          console.log(`Fetching posts from r/${sub.name}...`);
+          
+          // Get posts from this subreddit with retry logic
+          const subPosts = await this.getSubredditPostsWithRetry(reddit, sub.name, 25);
+          const formattedPosts = subPosts.map((post: any) => this.formatRedditPost(post));
           allPosts.push(...formattedPosts);
+          
+          console.log(`Successfully fetched ${formattedPosts.length} posts from r/${sub.name}`);
         } catch (error) {
           console.error(`Failed to fetch posts from r/${sub.name}:`, error);
           // Continue with other subreddits instead of failing completely
         }
       }
       
-      // Add business-focused subreddits to improve relevance
-      const businessSubs = ['entrepreneur', 'startups', 'SaaS', 'business'];
+      console.log(`Total posts fetched from subscribed subreddits: ${allPosts.length}`);
       
-      for (let i = 0; i < businessSubs.length && i < 2; i++) { // Add up to 2 business subs
-        try {
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Delay between requests
-          const businessSub = businessSubs[i];
-          
-          // Get fresh business content
-          // @ts-ignore: Snoowrap types are complex
-          const newBusinessPosts = await reddit.getSubreddit(businessSub).getNew({ limit: 15 });
-          // @ts-ignore: Snoowrap types are complex
-          const hotBusinessPosts = await reddit.getSubreddit(businessSub).getHot({ limit: 10 });
-          
-          const combinedBusinessPosts = [...newBusinessPosts, ...hotBusinessPosts];
-          const formattedBusinessPosts = combinedBusinessPosts.map((post: any) => this.formatRedditPost(post));
-          allPosts.push(...formattedBusinessPosts);
-        } catch (error) {
-          console.error(`Failed to fetch posts from r/${businessSubs[i]}:`, error);
-        }
+      // Add popular business/tech subreddits if we don't have enough content
+      if (allPosts.length < limit / 2) {
+        console.log('Adding posts from popular business/tech subreddits...');
+        await this.addPopularSubredditPosts(reddit, allPosts);
       }
 
-      // Remove duplicates
+      // Remove duplicates based on post ID
       const uniquePosts = Array.from(
         new Map(allPosts.map(post => [post.id, post])).values()
       );
       
-      // Sort by creation time and limit results
-      return uniquePosts
+      console.log(`After deduplication: ${uniquePosts.length} unique posts`);
+      
+      // Sort by creation time (newest first) and limit results
+      const finalPosts = uniquePosts
         .sort((a, b) => b.created.getTime() - a.created.getTime())
         .slice(0, limit);
+      
+      console.log(`Returning ${finalPosts.length} posts`);
+      return finalPosts;
         
     } catch (error) {
-      throw new Error(`Failed to fetch home feed: ${error}`);
+      console.error('Error in getHomeFeed:', error);
+      throw new Error(`Failed to fetch home feed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  /**
+   * Get posts from a single subreddit with retry logic
+   */
+  private static async getSubredditPostsWithRetry(reddit: any, subredditName: string, limit: number, retries: number = 2): Promise<any[]> {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        // Mix of new and hot posts for better content variety
+        const [newPosts, hotPosts] = await Promise.all([
+          reddit.getSubreddit(subredditName).getNew({ limit: Math.ceil(limit * 0.7) }),
+          reddit.getSubreddit(subredditName).getHot({ limit: Math.ceil(limit * 0.3) })
+        ]);
+        
+        return [...newPosts, ...hotPosts];
+      } catch (error) {
+        console.error(`Attempt ${attempt + 1} failed for r/${subredditName}:`, error);
+        
+        if (attempt === retries) {
+          throw error;
+        }
+        
+        // Exponential backoff
+        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+      }
+    }
+    
+    return [];
+  }
+
+  /**
+   * Add posts from popular business/tech subreddits to fill content gaps
+   */
+  private static async addPopularSubredditPosts(reddit: any, allPosts: RedditPost[]): Promise<void> {
+    const businessSubs = ['entrepreneur', 'startups', 'SaaS', 'business', 'webdev', 'programming'];
+    
+    for (let i = 0; i < Math.min(businessSubs.length, 3); i++) {
+      try {
+        await new Promise(resolve => setTimeout(resolve, 600));
+        const businessSub = businessSubs[i];
+        
+        console.log(`Adding posts from popular subreddit r/${businessSub}...`);
+        
+        const subPosts = await this.getSubredditPostsWithRetry(reddit, businessSub, 15);
+        const formattedPosts = subPosts.map((post: any) => this.formatRedditPost(post));
+        allPosts.push(...formattedPosts);
+        
+        console.log(`Added ${formattedPosts.length} posts from r/${businessSub}`);
+      } catch (error) {
+        console.error(`Failed to fetch posts from popular subreddit r/${businessSubs[i]}:`, error);
+      }
+    }
+  }
+
+  /**
+   * Fallback method when user has no subscribed subreddits
+   */
+  private static async getFallbackPosts(reddit: any, limit: number): Promise<RedditPost[]> {
+    const defaultSubs = ['popular', 'all'];
+    const allPosts: RedditPost[] = [];
+    
+    for (const subName of defaultSubs) {
+      try {
+        console.log(`Fetching from r/${subName} as fallback...`);
+        
+        const posts = await reddit.getSubreddit(subName).getHot({ limit: Math.ceil(limit / 2) });
+        const formattedPosts = posts.map((post: any) => this.formatRedditPost(post));
+        allPosts.push(...formattedPosts);
+        
+        if (allPosts.length >= limit) break;
+      } catch (error) {
+        console.error(`Failed to fetch fallback posts from r/${subName}:`, error);
+      }
+    }
+    
+    return allPosts.slice(0, limit);
   }
 
   /**
