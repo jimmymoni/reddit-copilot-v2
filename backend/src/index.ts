@@ -5,6 +5,7 @@ import authRoutes from './routes/auth';
 import userRoutes from './routes/user';
 import homefeedRoutes from './routes/homefeed';
 import researchRoutes from './routes/research';
+import intelligentResearchRoutes from './routes/intelligent-research';
 import subredditRoutes from './routes/subreddit';
 
 dotenv.config();
@@ -22,6 +23,7 @@ app.use('/auth', authRoutes);
 app.use('/api', userRoutes);
 app.use('/api/homefeed', homefeedRoutes);
 app.use('/api/research', researchRoutes);
+app.use('/api/intelligent-research', intelligentResearchRoutes);
 app.use('/api/subreddit', subredditRoutes);
 
 // Health check

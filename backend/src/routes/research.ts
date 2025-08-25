@@ -1,5 +1,5 @@
 import express from 'express'
-import { redditService } from '../services/reddit'
+import { RedditService } from '../services/reddit'
 import { kimiService } from '../services/kimi'
 
 const router = express.Router()
@@ -123,7 +123,7 @@ async function searchPainPoints(redditId: string, subreddits: string[], niche: s
       
       // Search with pain keywords
       for (const keyword of painKeywords.slice(0, 5)) { // Limit API calls
-        const posts = await redditService.searchSubreddit(redditId, subreddit, keyword, timeframe)
+        const posts = await RedditService.searchSubreddit(redditId, subreddit, keyword, timeframe)
         allPosts.push(...posts.slice(0, 10)) // Limit per keyword
         
         // Rate limiting

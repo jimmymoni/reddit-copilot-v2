@@ -23,7 +23,7 @@ router.get('/:name', authenticateUser, async (req: AuthenticatedRequest, res) =>
     // Get subreddit info and rules
     const [subredditInfo, rules] = await Promise.all([
       RedditService.getSubredditInfo(redditId, name),
-      RedditService.getSubredditRules(name).catch(() => null) // Don't fail if rules unavailable
+      RedditService.getSubredditRules(redditId, name).catch(() => null) // Don't fail if rules unavailable
     ]);
 
     res.json({
@@ -103,6 +103,7 @@ router.get('/:name/posts', authenticateUser, async (req: AuthenticatedRequest, r
 router.get('/:name/rules', authenticateUser, async (req: AuthenticatedRequest, res) => {
   try {
     const { name } = req.params;
+    const redditId = req.user!.redditId;
 
     if (!name) {
       return res.status(400).json({
@@ -111,7 +112,7 @@ router.get('/:name/rules', authenticateUser, async (req: AuthenticatedRequest, r
       });
     }
 
-    const rules = await RedditService.getSubredditRules(name);
+    const rules = await RedditService.getSubredditRules(redditId, name);
 
     res.json({
       success: true,

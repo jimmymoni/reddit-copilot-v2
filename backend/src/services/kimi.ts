@@ -53,7 +53,7 @@ class KimiService {
         throw new Error(`Kimi API error: ${response.status}`)
       }
 
-      const data = await response.json()
+      const data = await response.json() as any
       const content = data.choices[0].message.content
 
       // Parse JSON response

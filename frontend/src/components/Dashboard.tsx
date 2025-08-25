@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import ProfileCard from './ProfileCard'
 import SubredditList from './SubredditList'
 import ResearchEngine from './ResearchEngine'
+import IntelligentResearch from './IntelligentResearch'
 import HomeFeed from './HomeFeed'
 
 interface DashboardProps {
@@ -52,7 +53,7 @@ export default function Dashboard({ redditId }: DashboardProps) {
   const [subreddits, setSubreddits] = useState<Subreddit[]>([])
   const [suggestions, setSuggestions] = useState<Suggestion[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'home' | 'overview' | 'subreddits' | 'research'>('home')
+  const [activeTab, setActiveTab] = useState<'home' | 'overview' | 'subreddits' | 'research' | 'intelligent'>('home')
   const [showFiltersDropdown, setShowFiltersDropdown] = useState(false)
 
   useEffect(() => {
@@ -195,7 +196,8 @@ export default function Dashboard({ redditId }: DashboardProps) {
               { key: 'home', label: 'Home', icon: '🏠' },
               { key: 'overview', label: 'Overview', icon: '📊' },
               { key: 'subreddits', label: 'Subreddits', icon: '📱' },
-              { key: 'research', label: 'Research', icon: '🔍' }
+              { key: 'research', label: 'Research', icon: '🔍' },
+              { key: 'intelligent', label: 'AI Research', icon: '🧠' }
             ].map((tab) => (
               <button
                 key={tab.key}
@@ -333,6 +335,10 @@ export default function Dashboard({ redditId }: DashboardProps) {
 
       {activeTab === 'research' && (
         <ResearchEngine redditId={redditId} />
+      )}
+
+      {activeTab === 'intelligent' && (
+        <IntelligentResearch redditId={redditId} />
       )}
       </div>
     </div>

@@ -38,7 +38,9 @@ router.get('/reddit/callback', async (req: Request, res: Response) => {
       clientSecret: process.env.REDDIT_CLIENT_SECRET!
     });
 
-    const me = await tempReddit.getMe();
+    const mePromise = tempReddit.getMe();
+    // @ts-ignore: Circular reference issue with snoowrap types
+    const me = await mePromise;
     
     // Save user and tokens
     await RedditService.saveUserTokens(me.id, me.name, accessToken, refreshToken);

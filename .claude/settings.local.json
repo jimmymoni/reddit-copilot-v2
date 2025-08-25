@@ -33,9 +33,19 @@
       "Bash(powershell:*)",
       "Bash(git reset:*)",
       "Bash(node:*)",
-      "Bash(time curl:*)"
+      "Bash(time curl:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm start)",
+      "WebFetch(domain:www.anthropic.com)",
+      "WebFetch(domain:www.builder.io)",
+      "WebFetch(domain:waleedk.medium.com)"
     ],
     "deny": [],
-    "ask": []
+    "ask": [],
+    "additionalDirectories": [
+      "C:\\c\\Users\\Tomso\\OneDrive\\Documents",
+      "C:\\c\\Users\\Tomso\\OneDrive\\Documents\\REDDIT"
+    ]
   }
 }
